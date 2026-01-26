@@ -1,6 +1,10 @@
 # Output directory
 generated-images/
 
+# Test fixtures (generated images)
+test/fixtures/*
+!test/fixtures/.gitkeep
+
 # Binary
 /replicate-images
 

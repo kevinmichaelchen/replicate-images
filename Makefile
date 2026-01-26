@@ -1,10 +1,14 @@
-.PHONY: build test lint fmt vuln clean all
+.PHONY: build test test-e2e lint fmt vuln clean all
 
 build:
 	go build -o replicate-images ./cmd/replicate-images
 
 test:
 	go test -v -race -coverprofile=coverage.out ./...
+
+test-e2e:
+	@echo "WARNING: This may cost money (1 image if not cached)"
+	@./scripts/test-e2e.sh
 
 lint:
 	golangci-lint run
