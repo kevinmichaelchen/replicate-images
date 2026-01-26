@@ -13,6 +13,8 @@ A CLI that generates images from text prompts using [Replicate].
 - Model search by popularity
 - Agent-friendly: JSON output, dry-run, structured exit codes
 
+![Architecture Diagram](diagram.webp)
+
 ## Installation
 
 ### Script (macOS/Linux/FreeBSD)
