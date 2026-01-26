@@ -22,6 +22,7 @@ var (
 	flagNoCache     bool
 	flagConcurrency int
 	flagJSON        bool
+	flagDryRun      bool
 )
 
 // GenerateResult represents the JSON output for a single generation.
@@ -30,9 +31,25 @@ type GenerateResult struct {
 	Prompt     string `json:"prompt"`
 	Model      string `json:"model"`
 	Hash       string `json:"hash"`
-	OutputFile string `json:"output_file"`
+	OutputFile string `json:"output_file,omitempty"`
 	Cached     bool   `json:"cached"`
 	Error      string `json:"error,omitempty"`
+}
+
+// DryRunResult represents the JSON output for a dry-run.
+type DryRunResult struct {
+	ToGenerate int              `json:"to_generate"`
+	Cached     int              `json:"cached"`
+	Prompts    []DryRunPrompt   `json:"prompts"`
+}
+
+// DryRunPrompt represents a single prompt in dry-run output.
+type DryRunPrompt struct {
+	Prompt     string `json:"prompt"`
+	Model      string `json:"model"`
+	Hash       string `json:"hash"`
+	Status     string `json:"status"`
+	OutputFile string `json:"output_file,omitempty"`
 }
 
 func main() {
@@ -82,6 +99,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "./generated-images", "Output directory")
 	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "Force regeneration, ignore cache")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output results as JSON (JSONL for batch)")
+	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be generated without executing")
 	rootCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Replicate model to use")
 
 	batchCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
@@ -95,6 +113,58 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 	prompt := args[0]
 
+	hash := cache.Hash(prompt, flagModel)
+
+	// For dry-run, we only need to check the cache
+	if flagDryRun {
+		c, err := cache.Load(flagOutput)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to load cache: %w", err)
+		}
+
+		status := "pending"
+		var outputFile string
+		if !flagNoCache && c != nil {
+			if entry := c.Lookup(hash); entry != nil {
+				outputPath := filepath.Join(flagOutput, entry.OutputFile)
+				if _, err := os.Stat(outputPath); err == nil {
+					status = "cached"
+					outputFile = outputPath
+				}
+			}
+		}
+
+		result := DryRunResult{
+			ToGenerate: 0,
+			Cached:     0,
+			Prompts: []DryRunPrompt{{
+				Prompt:     prompt,
+				Model:      flagModel,
+				Hash:       hash,
+				Status:     status,
+				OutputFile: outputFile,
+			}},
+		}
+		if status == "cached" {
+			result.Cached = 1
+		} else {
+			result.ToGenerate = 1
+		}
+
+		if flagJSON {
+			outputJSON(result)
+		} else {
+			fmt.Printf("Dry run: %s\n", prompt)
+			fmt.Printf("  Model:  %s\n", flagModel)
+			fmt.Printf("  Hash:   %s\n", hash)
+			fmt.Printf("  Status: %s\n", status)
+			if outputFile != "" {
+				fmt.Printf("  File:   %s\n", outputFile)
+			}
+		}
+		return nil
+	}
+
 	// Ensure output directory exists
 	if err := os.MkdirAll(flagOutput, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
@@ -107,7 +177,6 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Check cache
-	hash := cache.Hash(prompt, flagModel)
 	if !flagNoCache {
 		if entry := c.Lookup(hash); entry != nil {
 			outputPath := filepath.Join(flagOutput, entry.OutputFile)
@@ -265,25 +334,34 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no prompts found in file")
 	}
 
-	// Ensure output directory exists
-	if err := os.MkdirAll(flagOutput, 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
+	// Load cache (don't create output dir for dry-run)
+	var c *cache.Cache
+	if flagDryRun {
+		c, err = cache.Load(flagOutput)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to load cache: %w", err)
+		}
+		if c == nil {
+			c = &cache.Cache{}
+		}
+	} else {
+		// Ensure output directory exists
+		if err := os.MkdirAll(flagOutput, 0755); err != nil {
+			return fmt.Errorf("failed to create output directory: %w", err)
+		}
+		c, err = cache.Load(flagOutput)
+		if err != nil {
+			return fmt.Errorf("failed to load cache: %w", err)
+		}
 	}
 
-	// Load cache
-	c, err := cache.Load(flagOutput)
-	if err != nil {
-		return fmt.Errorf("failed to load cache: %w", err)
-	}
+	// Categorize prompts
+	var (
+		toGenerate []PromptEntry
+		dryPrompts []DryRunPrompt
+		cachedCount int
+	)
 
-	// Create client
-	rc, err := client.New()
-	if err != nil {
-		return err
-	}
-
-	// Filter to only prompts that need generation
-	var toGenerate []PromptEntry
 	for _, p := range pf.Prompts {
 		model := p.Model
 		if model == "" {
@@ -291,11 +369,24 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		}
 
 		hash := cache.Hash(p.Prompt, model)
+		isCached := false
+
 		if !flagNoCache {
 			if entry := c.Lookup(hash); entry != nil {
 				outputPath := filepath.Join(flagOutput, entry.OutputFile)
 				if _, err := os.Stat(outputPath); err == nil {
-					if flagJSON {
+					isCached = true
+					cachedCount++
+
+					if flagDryRun {
+						dryPrompts = append(dryPrompts, DryRunPrompt{
+							Prompt:     p.Prompt,
+							Model:      model,
+							Hash:       hash,
+							Status:     "cached",
+							OutputFile: outputPath,
+						})
+					} else if flagJSON {
 						outputJSON(GenerateResult{
 							Status:     "cached",
 							Prompt:     p.Prompt,
@@ -307,11 +398,49 @@ func runBatch(cmd *cobra.Command, args []string) error {
 					} else {
 						fmt.Printf("Cached: %s\n", p.Prompt)
 					}
-					continue
 				}
 			}
 		}
-		toGenerate = append(toGenerate, PromptEntry{Prompt: p.Prompt, Model: model})
+
+		if !isCached {
+			toGenerate = append(toGenerate, PromptEntry{Prompt: p.Prompt, Model: model})
+			if flagDryRun {
+				dryPrompts = append(dryPrompts, DryRunPrompt{
+					Prompt: p.Prompt,
+					Model:  model,
+					Hash:   hash,
+					Status: "pending",
+				})
+			}
+		}
+	}
+
+	// Handle dry-run output
+	if flagDryRun {
+		result := DryRunResult{
+			ToGenerate: len(toGenerate),
+			Cached:     cachedCount,
+			Prompts:    dryPrompts,
+		}
+
+		if flagJSON {
+			outputJSON(result)
+		} else {
+			fmt.Printf("Dry run summary:\n")
+			fmt.Printf("  To generate: %d\n", result.ToGenerate)
+			fmt.Printf("  Cached:      %d\n", result.Cached)
+			fmt.Printf("  Total:       %d\n\n", len(pf.Prompts))
+
+			for _, p := range dryPrompts {
+				fmt.Printf("  [%s] %s\n", p.Status, p.Prompt)
+				fmt.Printf("         Model: %s\n", p.Model)
+				fmt.Printf("         Hash:  %s\n", p.Hash)
+				if p.OutputFile != "" {
+					fmt.Printf("         File:  %s\n", p.OutputFile)
+				}
+			}
+		}
+		return nil
 	}
 
 	if len(toGenerate) == 0 {
@@ -319,6 +448,12 @@ func runBatch(cmd *cobra.Command, args []string) error {
 			fmt.Println("All images already cached.")
 		}
 		return nil
+	}
+
+	// Create client (only needed if actually generating)
+	rc, err := client.New()
+	if err != nil {
+		return err
 	}
 
 	if !flagJSON {
