@@ -162,15 +162,22 @@ make fmt
 
 ### Releasing
 
-Create and push a tag to trigger a release:
+Releases are fully automated via
+[release-please](https://github.com/googleapis/release-please):
 
-```bash
-git tag -a v1.0.0 -m "Release v1.0.0"
-git push origin v1.0.0
-```
+1. Push commits to `main` using
+   [conventional commits](https://conventionalcommits.org/)
+2. release-please creates/updates a Release PR with changelog
+3. Merge the PR when ready to release
+4. GitHub Actions automatically builds binaries and publishes the release
 
-GitHub Actions will build binaries for all platforms and create a GitHub
-Release.
+**Commit prefixes and version bumps:**
+
+| Prefix                         | Version Bump | Example                             |
+| ------------------------------ | ------------ | ----------------------------------- |
+| `fix:`                         | Patch        | `fix: handle empty response`        |
+| `feat:`                        | Minor        | `feat: add retry logic`             |
+| `feat!:` or `BREAKING CHANGE:` | Major        | `feat!: change API response format` |
 
 [Replicate]: https://replicate.com
 [nativewebp]: https://github.com/HugoSmits86/nativewebp
