@@ -103,7 +103,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Update cache
-	c.Add(prompt, flagModel, filename)
+	c.Upsert(prompt, flagModel, filename)
 	if err := c.Save(); err != nil {
 		return fmt.Errorf("failed to save cache: %w", err)
 	}

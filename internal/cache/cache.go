@@ -74,15 +74,27 @@ func (c *Cache) Lookup(hash string) *Entry {
 	return nil
 }
 
-// Add creates a new cache entry.
-func (c *Cache) Add(prompt, model, outputFile string) *Entry {
+// Upsert creates or updates a cache entry.
+func (c *Cache) Upsert(prompt, model, outputFile string) *Entry {
+	hash := Hash(prompt, model)
+
+	// Update existing entry if found
+	for i := range c.Entries {
+		if c.Entries[i].Hash == hash {
+			c.Entries[i].OutputFile = outputFile
+			c.Entries[i].CreatedAt = time.Now()
+			return &c.Entries[i]
+		}
+	}
+
+	// Add new entry
 	entry := Entry{
-		Hash:       Hash(prompt, model),
+		Hash:       hash,
 		Prompt:     prompt,
 		Model:      model,
 		OutputFile: outputFile,
 		CreatedAt:  time.Now(),
 	}
 	c.Entries = append(c.Entries, entry)
-	return &entry
+	return &c.Entries[len(c.Entries)-1]
 }
