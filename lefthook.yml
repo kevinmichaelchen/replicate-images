@@ -1,0 +1,16 @@
+# https://github.com/evilmartians/lefthook
+
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.go"
+      run: gofmt -l . | grep . && exit 1 || exit 0
+
+pre-push:
+  parallel: true
+  commands:
+    lint:
+      run: golangci-lint run
+    test:
+      run: go test -race ./...
