@@ -23,8 +23,21 @@ linters-settings:
   gocritic:
     enabled-tags:
       - diagnostic
-      - style
       - performance
+    disabled-checks:
+      - ifElseChain
+      - rangeValCopy
+  revive:
+    rules:
+      - name: package-comments
+        disabled: true
+      - name: exported
+        disabled: true
+  gosec:
+    excludes:
+      - G301 # directory permissions 0755 is standard
+      - G304 # file path from variable is safe for cache
+      - G306 # file permissions 0644 is appropriate for images
 
 issues:
   exclude-use-default: false

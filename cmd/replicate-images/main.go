@@ -18,10 +18,10 @@ import (
 
 // Exit codes for agent-friendly operation.
 const (
-	ExitSuccess       = 0 // All operations succeeded
-	ExitPartialFail   = 1 // Some generations failed
-	ExitTotalFail     = 2 // All generations failed
-	ExitInvalidInput  = 3 // Invalid input (bad YAML, missing file, etc.)
+	ExitSuccess      = 0 // All operations succeeded
+	ExitPartialFail  = 1 // Some generations failed
+	ExitTotalFail    = 2 // All generations failed
+	ExitInvalidInput = 3 // Invalid input (bad YAML, missing file, etc.)
 )
 
 var (
@@ -47,9 +47,9 @@ type GenerateResult struct {
 
 // DryRunResult represents the JSON output for a dry-run.
 type DryRunResult struct {
-	ToGenerate int              `json:"to_generate"`
-	Cached     int              `json:"cached"`
-	Prompts    []DryRunPrompt   `json:"prompts"`
+	ToGenerate int            `json:"to_generate"`
+	Cached     int            `json:"cached"`
+	Prompts    []DryRunPrompt `json:"prompts"`
 }
 
 // DryRunPrompt represents a single prompt in dry-run output.
@@ -162,7 +162,7 @@ func shouldOutput() bool {
 	return !flagJSON && !flagQuiet
 }
 
-func runGenerate(cmd *cobra.Command, args []string) error {
+func runGenerate(_ *cobra.Command, args []string) error {
 	ctx := context.Background()
 	prompt := args[0]
 
@@ -312,10 +312,10 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 func outputJSON(v any) {
 	enc := json.NewEncoder(os.Stdout)
-	enc.Encode(v)
+	_ = enc.Encode(v)
 }
 
-func runModels(cmd *cobra.Command, args []string) error {
+func runModels(_ *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	query := "text to image"
@@ -369,7 +369,7 @@ type PromptEntry struct {
 	Model  string `yaml:"model,omitempty"`
 }
 
-func runBatch(cmd *cobra.Command, args []string) error {
+func runBatch(_ *cobra.Command, args []string) error {
 	ctx := context.Background()
 
 	// Read and parse YAML file
@@ -410,8 +410,8 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 	// Categorize prompts
 	var (
-		toGenerate []PromptEntry
-		dryPrompts []DryRunPrompt
+		toGenerate  []PromptEntry
+		dryPrompts  []DryRunPrompt
 		cachedCount int
 	)
 
@@ -619,10 +619,10 @@ type ValidationResult struct {
 
 // ValidationSummary provides counts for validation.
 type ValidationSummary struct {
-	TotalPrompts   int `json:"total_prompts"`
-	UniquePrompts  int `json:"unique_prompts"`
-	Duplicates     int `json:"duplicates"`
-	EmptyPrompts   int `json:"empty_prompts"`
+	TotalPrompts  int `json:"total_prompts"`
+	UniquePrompts int `json:"unique_prompts"`
+	Duplicates    int `json:"duplicates"`
+	EmptyPrompts  int `json:"empty_prompts"`
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {

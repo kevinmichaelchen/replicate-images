@@ -86,7 +86,7 @@ func (m ModelInfo) FullName() string {
 }
 
 func downloadImage(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,7 @@ func downloadImage(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to download image: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("download failed with status: %d", resp.StatusCode)
