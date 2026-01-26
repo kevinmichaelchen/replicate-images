@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,7 +21,19 @@ var (
 	flagOutput      string
 	flagNoCache     bool
 	flagConcurrency int
+	flagJSON        bool
 )
+
+// GenerateResult represents the JSON output for a single generation.
+type GenerateResult struct {
+	Status     string `json:"status"`
+	Prompt     string `json:"prompt"`
+	Model      string `json:"model"`
+	Hash       string `json:"hash"`
+	OutputFile string `json:"output_file"`
+	Cached     bool   `json:"cached"`
+	Error      string `json:"error,omitempty"`
+}
 
 func main() {
 	if err := rootCmd.Execute(); err != nil {
@@ -68,6 +81,7 @@ Existing cached images are skipped unless --no-cache is set.`,
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "./generated-images", "Output directory")
 	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "Force regeneration, ignore cache")
+	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output results as JSON (JSONL for batch)")
 	rootCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Replicate model to use")
 
 	batchCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
@@ -98,7 +112,18 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		if entry := c.Lookup(hash); entry != nil {
 			outputPath := filepath.Join(flagOutput, entry.OutputFile)
 			if _, err := os.Stat(outputPath); err == nil {
-				fmt.Printf("Using cached image: %s\n", outputPath)
+				if flagJSON {
+					outputJSON(GenerateResult{
+						Status:     "cached",
+						Prompt:     prompt,
+						Model:      flagModel,
+						Hash:       hash,
+						OutputFile: outputPath,
+						Cached:     true,
+					})
+				} else {
+					fmt.Printf("Using cached image: %s\n", outputPath)
+				}
 				return nil
 			}
 		}
@@ -110,15 +135,29 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Generating image with %s...\n", flagModel)
+	if !flagJSON {
+		fmt.Printf("Generating image with %s...\n", flagModel)
+	}
 
 	// Generate image
 	data, url, err := rc.GenerateImage(ctx, flagModel, prompt)
 	if err != nil {
+		if flagJSON {
+			outputJSON(GenerateResult{
+				Status: "error",
+				Prompt: prompt,
+				Model:  flagModel,
+				Hash:   hash,
+				Error:  err.Error(),
+			})
+			return nil
+		}
 		return err
 	}
 
-	fmt.Printf("Downloaded from: %s\n", url)
+	if !flagJSON {
+		fmt.Printf("Downloaded from: %s\n", url)
+	}
 
 	// Convert to WEBP and save
 	filename := hash + ".webp"
@@ -134,8 +173,24 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save cache: %w", err)
 	}
 
-	fmt.Printf("Saved: %s\n", outputPath)
+	if flagJSON {
+		outputJSON(GenerateResult{
+			Status:     "generated",
+			Prompt:     prompt,
+			Model:      flagModel,
+			Hash:       hash,
+			OutputFile: outputPath,
+			Cached:     false,
+		})
+	} else {
+		fmt.Printf("Saved: %s\n", outputPath)
+	}
 	return nil
+}
+
+func outputJSON(v any) {
+	enc := json.NewEncoder(os.Stdout)
+	enc.Encode(v)
 }
 
 func runModels(cmd *cobra.Command, args []string) error {
@@ -240,7 +295,18 @@ func runBatch(cmd *cobra.Command, args []string) error {
 			if entry := c.Lookup(hash); entry != nil {
 				outputPath := filepath.Join(flagOutput, entry.OutputFile)
 				if _, err := os.Stat(outputPath); err == nil {
-					fmt.Printf("Cached: %s\n", p.Prompt)
+					if flagJSON {
+						outputJSON(GenerateResult{
+							Status:     "cached",
+							Prompt:     p.Prompt,
+							Model:      model,
+							Hash:       hash,
+							OutputFile: outputPath,
+							Cached:     true,
+						})
+					} else {
+						fmt.Printf("Cached: %s\n", p.Prompt)
+					}
 					continue
 				}
 			}
@@ -249,11 +315,15 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(toGenerate) == 0 {
-		fmt.Println("All images already cached.")
+		if !flagJSON {
+			fmt.Println("All images already cached.")
+		}
 		return nil
 	}
 
-	fmt.Printf("Generating %d images (concurrency: %d)...\n\n", len(toGenerate), flagConcurrency)
+	if !flagJSON {
+		fmt.Printf("Generating %d images (concurrency: %d)...\n\n", len(toGenerate), flagConcurrency)
+	}
 
 	// Process with concurrency limit
 	var (
@@ -277,16 +347,36 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 			data, _, err := rc.GenerateImage(ctx, model, prompt)
 			if err != nil {
-				fmt.Printf("Error [%s]: %v\n", prompt, err)
 				mu.Lock()
+				if flagJSON {
+					outputJSON(GenerateResult{
+						Status: "error",
+						Prompt: prompt,
+						Model:  model,
+						Hash:   hash,
+						Error:  err.Error(),
+					})
+				} else {
+					fmt.Printf("Error [%s]: %v\n", prompt, err)
+				}
 				errored++
 				mu.Unlock()
 				return
 			}
 
 			if err := convert.SaveWebP(data, outputPath); err != nil {
-				fmt.Printf("Error saving [%s]: %v\n", prompt, err)
 				mu.Lock()
+				if flagJSON {
+					outputJSON(GenerateResult{
+						Status: "error",
+						Prompt: prompt,
+						Model:  model,
+						Hash:   hash,
+						Error:  err.Error(),
+					})
+				} else {
+					fmt.Printf("Error saving [%s]: %v\n", prompt, err)
+				}
 				errored++
 				mu.Unlock()
 				return
@@ -294,9 +384,19 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 			mu.Lock()
 			c.Upsert(prompt, model, filename)
+			if flagJSON {
+				outputJSON(GenerateResult{
+					Status:     "generated",
+					Prompt:     prompt,
+					Model:      model,
+					Hash:       hash,
+					OutputFile: outputPath,
+					Cached:     false,
+				})
+			} else {
+				fmt.Printf("Generated: %s -> %s\n", prompt, filename)
+			}
 			mu.Unlock()
-
-			fmt.Printf("Generated: %s -> %s\n", prompt, filename)
 		}(p.Prompt, p.Model)
 	}
 
@@ -308,9 +408,14 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if errored > 0 {
-		return fmt.Errorf("%d generation(s) failed", errored)
+		if !flagJSON {
+			return fmt.Errorf("%d generation(s) failed", errored)
+		}
+		return nil
 	}
 
-	fmt.Printf("\nDone. Generated %d images.\n", len(toGenerate))
+	if !flagJSON {
+		fmt.Printf("\nDone. Generated %d images.\n", len(toGenerate))
+	}
 	return nil
 }
