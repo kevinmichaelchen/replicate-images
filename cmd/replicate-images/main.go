@@ -16,6 +16,14 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Exit codes for agent-friendly operation.
+const (
+	ExitSuccess       = 0 // All operations succeeded
+	ExitPartialFail   = 1 // Some generations failed
+	ExitTotalFail     = 2 // All generations failed
+	ExitInvalidInput  = 3 // Invalid input (bad YAML, missing file, etc.)
+)
+
 var (
 	flagModel       string
 	flagOutput      string
@@ -52,15 +60,36 @@ type DryRunPrompt struct {
 	OutputFile string `json:"output_file,omitempty"`
 }
 
+// ExitError represents an error with a specific exit code.
+type ExitError struct {
+	Code    int
+	Message string
+}
+
+func (e *ExitError) Error() string {
+	return e.Message
+}
+
 func main() {
 	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
+		if exitErr, ok := err.(*ExitError); ok {
+			if exitErr.Message != "" && !flagJSON {
+				fmt.Fprintln(os.Stderr, exitErr.Message)
+			}
+			os.Exit(exitErr.Code)
+		}
+		if !flagJSON {
+			fmt.Fprintln(os.Stderr, err)
+		}
+		os.Exit(ExitPartialFail)
 	}
 }
 
 var rootCmd = &cobra.Command{
-	Use:   "replicate-images [prompt]",
-	Short: "Generate images from text prompts using Replicate",
+	Use:           "replicate-images [prompt]",
+	Short:         "Generate images from text prompts using Replicate",
+	SilenceErrors: true,
+	SilenceUsage:  true,
 	Long: `A CLI tool that generates images from text prompts using Replicate's API.
 
 Images are cached based on prompt+model hash to avoid regenerating duplicates.
@@ -322,16 +351,16 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	// Read and parse YAML file
 	data, err := os.ReadFile(args[0])
 	if err != nil {
-		return fmt.Errorf("failed to read file: %w", err)
+		return &ExitError{Code: ExitInvalidInput, Message: fmt.Sprintf("failed to read file: %v", err)}
 	}
 
 	var pf PromptFile
 	if err := yaml.Unmarshal(data, &pf); err != nil {
-		return fmt.Errorf("failed to parse YAML: %w", err)
+		return &ExitError{Code: ExitInvalidInput, Message: fmt.Sprintf("failed to parse YAML: %v", err)}
 	}
 
 	if len(pf.Prompts) == 0 {
-		return fmt.Errorf("no prompts found in file")
+		return &ExitError{Code: ExitInvalidInput, Message: "no prompts found in file"}
 	}
 
 	// Load cache (don't create output dir for dry-run)
@@ -543,10 +572,11 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if errored > 0 {
-		if !flagJSON {
-			return fmt.Errorf("%d generation(s) failed", errored)
+		msg := fmt.Sprintf("%d generation(s) failed", errored)
+		if errored == len(toGenerate) {
+			return &ExitError{Code: ExitTotalFail, Message: msg}
 		}
-		return nil
+		return &ExitError{Code: ExitPartialFail, Message: msg}
 	}
 
 	if !flagJSON {
