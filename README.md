@@ -1,5 +1,7 @@
 # replicate-images
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/kevinmichaelchen/replicate-images)](https://goreportcard.com/report/github.com/kevinmichaelchen/replicate-images)
+
 A CLI that generates images from text prompts using [Replicate].
 
 ## Features
@@ -102,11 +104,11 @@ replicate-images validate --json prompts.yaml
 
 ### Exit Codes
 
-| Code | Meaning                              |
-| ---- | ------------------------------------ |
-| 0    | Success (all generated or cached)    |
-| 1    | Partial failure (some failed)        |
-| 2    | Total failure (all failed)           |
+| Code | Meaning                                |
+| ---- | -------------------------------------- |
+| 0    | Success (all generated or cached)      |
+| 1    | Partial failure (some failed)          |
+| 2    | Total failure (all failed)             |
 | 3    | Invalid input (bad YAML, missing file) |
 
 ### Quiet Mode
