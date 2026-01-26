@@ -69,6 +69,22 @@ prompts:
 
 Prompts without a `model` use the default or `--model` flag value.
 
+## Supported Models
+
+| Model                            | Best For                                          |
+| -------------------------------- | ------------------------------------------------- |
+| `black-forest-labs/flux-schnell` | Fast, high-quality generations (default)          |
+| `black-forest-labs/flux-1.1-pro` | Higher quality, slower. Best for final outputs    |
+| `stability-ai/sdxl`              | Classic model with wide style range               |
+| `google/nano-banana-pro`         | Text rendering, diagrams, technical illustrations |
+
+Other models may work but are untested. List supported models:
+
+```bash
+replicate-images supported-models
+replicate-images supported-models --json  # For agents
+```
+
 ## Configuration
 
 | Flag                  | Default                          | Description                    |
@@ -101,6 +117,15 @@ Preview what would be generated without making API calls:
 ```bash
 replicate-images --dry-run --json "a cat in space"
 {"to_generate":1,"cached":0,"prompts":[{"prompt":"a cat in space","model":"black-forest-labs/flux-schnell","hash":"f417c5f0015e36af","status":"pending"}]}
+```
+
+### Discover Supported Models
+
+Query available models programmatically:
+
+```bash
+replicate-images supported-models --json
+[{"id":"black-forest-labs/flux-schnell","name":"FLUX Schnell","description":"Fast, high-quality generations. Great default choice.","default":true},...]
 ```
 
 ### Validation

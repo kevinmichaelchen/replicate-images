@@ -6,10 +6,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/kevinmichaelchen/replicate-images/internal/models"
 	"github.com/replicate/replicate-go"
 )
-
-const DefaultModel = "black-forest-labs/flux-schnell"
 
 type Client struct {
 	r *replicate.Client
@@ -25,25 +24,27 @@ func New() (*Client, error) {
 }
 
 // GenerateImage runs a text-to-image model and returns the image data.
-func (c *Client) GenerateImage(ctx context.Context, model, prompt string) ([]byte, string, error) {
+func (c *Client) GenerateImage(ctx context.Context, modelID, prompt string) ([]byte, string, error) {
 	input := replicate.PredictionInput{
 		"prompt": prompt,
 	}
 
-	output, err := c.r.Run(ctx, model, input, nil)
+	// Apply model-specific defaults
+	if model, ok := models.Get(modelID); ok {
+		for k, v := range model.Defaults {
+			input[k] = v
+		}
+	}
+
+	output, err := c.r.Run(ctx, modelID, input, nil)
 	if err != nil {
 		return nil, "", fmt.Errorf("prediction failed: %w", err)
 	}
 
-	// Output is typically a slice containing image URL(s)
-	outputs, ok := output.([]any)
-	if !ok || len(outputs) == 0 {
-		return nil, "", fmt.Errorf("unexpected output format: %T", output)
-	}
-
-	imageURL, ok := outputs[0].(string)
-	if !ok {
-		return nil, "", fmt.Errorf("expected string URL, got: %T", outputs[0])
+	// Extract image URL from output - format varies by model
+	imageURL, err := extractImageURL(output)
+	if err != nil {
+		return nil, "", err
 	}
 
 	// Download the image
@@ -62,16 +63,16 @@ func (c *Client) SearchModels(ctx context.Context, query string) ([]ModelInfo, e
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
 
-	var models []ModelInfo
+	var results []ModelInfo
 	for _, m := range page.Results {
-		models = append(models, ModelInfo{
+		results = append(results, ModelInfo{
 			Owner:       m.Owner,
 			Name:        m.Name,
 			Description: m.Description,
 			RunCount:    m.RunCount,
 		})
 	}
-	return models, nil
+	return results, nil
 }
 
 type ModelInfo struct {
@@ -83,6 +84,36 @@ type ModelInfo struct {
 
 func (m ModelInfo) FullName() string {
 	return fmt.Sprintf("%s/%s", m.Owner, m.Name)
+}
+
+// extractImageURL handles various output formats from different Replicate models.
+// Known formats:
+//   - string: direct URL (e.g., "https://...")
+//   - []any: array of URLs, take first (e.g., ["https://..."])
+//   - map[string]any: object with URL field (e.g., {"url": "https://..."})
+func extractImageURL(output any) (string, error) {
+	switch v := output.(type) {
+	case string:
+		return v, nil
+	case []any:
+		if len(v) == 0 {
+			return "", fmt.Errorf("empty output array from model")
+		}
+		// First element could be string or map
+		return extractImageURL(v[0])
+	case map[string]any:
+		// Try common field names
+		for _, key := range []string{"url", "image", "output", "uri"} {
+			if val, ok := v[key]; ok {
+				if s, ok := val.(string); ok {
+					return s, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("no image URL found in output object: %v", v)
+	default:
+		return "", fmt.Errorf("unexpected output format %T: %v", output, output)
+	}
 }
 
 func downloadImage(ctx context.Context, url string) ([]byte, error) {

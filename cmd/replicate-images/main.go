@@ -12,6 +12,7 @@ import (
 	"github.com/kevinmichaelchen/replicate-images/internal/cache"
 	"github.com/kevinmichaelchen/replicate-images/internal/client"
 	"github.com/kevinmichaelchen/replicate-images/internal/convert"
+	"github.com/kevinmichaelchen/replicate-images/internal/models"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -106,6 +107,12 @@ var modelsCmd = &cobra.Command{
 	RunE:  runModels,
 }
 
+var supportedModelsCmd = &cobra.Command{
+	Use:   "supported-models",
+	Short: "List officially supported models",
+	RunE:  runSupportedModels,
+}
+
 var batchCmd = &cobra.Command{
 	Use:   "batch <prompts.yaml>",
 	Short: "Generate images from a YAML file of prompts",
@@ -145,14 +152,15 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output results as JSON (JSONL for batch)")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be generated without executing")
 	rootCmd.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false, "Suppress all output except errors")
-	rootCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Replicate model to use")
+	rootCmd.Flags().StringVarP(&flagModel, "model", "m", models.Default, "Replicate model to use")
 
-	batchCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
+	batchCmd.Flags().StringVarP(&flagModel, "model", "m", models.Default, "Default model for prompts without one")
 	batchCmd.Flags().IntVarP(&flagConcurrency, "concurrency", "c", 3, "Number of concurrent generations")
 
-	validateCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
+	validateCmd.Flags().StringVarP(&flagModel, "model", "m", models.Default, "Default model for prompts without one")
 
 	rootCmd.AddCommand(modelsCmd)
+	rootCmd.AddCommand(supportedModelsCmd)
 	rootCmd.AddCommand(batchCmd)
 	rootCmd.AddCommand(validateCmd)
 }
@@ -162,9 +170,52 @@ func shouldOutput() bool {
 	return !flagJSON && !flagQuiet
 }
 
+// warnUnsupportedModel prints a warning if the model isn't in the supported list.
+func warnUnsupportedModel(modelID string) {
+	if !models.IsSupported(modelID) && shouldOutput() {
+		fmt.Fprintf(os.Stderr, "Warning: %s is not a supported model. It may work but is untested.\n", modelID)
+		fmt.Fprintf(os.Stderr, "Run 'replicate-images supported-models' to see supported models.\n\n")
+	}
+}
+
+func runSupportedModels(_ *cobra.Command, _ []string) error {
+	if flagJSON {
+		type modelJSON struct {
+			ID          string `json:"id"`
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Default     bool   `json:"default,omitempty"`
+		}
+		var out []modelJSON
+		for _, m := range models.Supported {
+			out = append(out, modelJSON{
+				ID:          m.ID,
+				Name:        m.Name,
+				Description: m.Description,
+				Default:     m.ID == models.Default,
+			})
+		}
+		outputJSON(out)
+		return nil
+	}
+
+	fmt.Println("Supported models:")
+	for _, m := range models.Supported {
+		defaultMarker := ""
+		if m.ID == models.Default {
+			defaultMarker = " (default)"
+		}
+		fmt.Printf("  %s%s\n", m.ID, defaultMarker)
+		fmt.Printf("    %s\n\n", m.Description)
+	}
+	return nil
+}
+
 func runGenerate(_ *cobra.Command, args []string) error {
 	ctx := context.Background()
 	prompt := args[0]
+
+	warnUnsupportedModel(flagModel)
 
 	hash := cache.Hash(prompt, flagModel)
 
@@ -385,6 +436,14 @@ func runBatch(_ *cobra.Command, args []string) error {
 
 	if len(pf.Prompts) == 0 {
 		return &ExitError{Code: ExitInvalidInput, Message: "no prompts found in file"}
+	}
+
+	// Warn about unsupported models
+	warnUnsupportedModel(flagModel)
+	for _, p := range pf.Prompts {
+		if p.Model != "" {
+			warnUnsupportedModel(p.Model)
+		}
 	}
 
 	// Load cache (don't create output dir for dry-run)
