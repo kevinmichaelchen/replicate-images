@@ -31,6 +31,7 @@ var (
 	flagConcurrency int
 	flagJSON        bool
 	flagDryRun      bool
+	flagQuiet       bool
 )
 
 // GenerateResult represents the JSON output for a single generation.
@@ -143,6 +144,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "Force regeneration, ignore cache")
 	rootCmd.PersistentFlags().BoolVar(&flagJSON, "json", false, "Output results as JSON (JSONL for batch)")
 	rootCmd.PersistentFlags().BoolVar(&flagDryRun, "dry-run", false, "Show what would be generated without executing")
+	rootCmd.PersistentFlags().BoolVarP(&flagQuiet, "quiet", "q", false, "Suppress all output except errors")
 	rootCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Replicate model to use")
 
 	batchCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
@@ -153,6 +155,11 @@ func init() {
 	rootCmd.AddCommand(modelsCmd)
 	rootCmd.AddCommand(batchCmd)
 	rootCmd.AddCommand(validateCmd)
+}
+
+// shouldOutput returns true if human-readable output should be shown.
+func shouldOutput() bool {
+	return !flagJSON && !flagQuiet
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -199,7 +206,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 
 		if flagJSON {
 			outputJSON(result)
-		} else {
+		} else if shouldOutput() {
 			fmt.Printf("Dry run: %s\n", prompt)
 			fmt.Printf("  Model:  %s\n", flagModel)
 			fmt.Printf("  Hash:   %s\n", hash)
@@ -236,7 +243,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 						OutputFile: outputPath,
 						Cached:     true,
 					})
-				} else {
+				} else if shouldOutput() {
 					fmt.Printf("Using cached image: %s\n", outputPath)
 				}
 				return nil
@@ -250,7 +257,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !flagJSON {
+	if shouldOutput() {
 		fmt.Printf("Generating image with %s...\n", flagModel)
 	}
 
@@ -270,7 +277,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !flagJSON {
+	if shouldOutput() {
 		fmt.Printf("Downloaded from: %s\n", url)
 	}
 
@@ -297,7 +304,7 @@ func runGenerate(cmd *cobra.Command, args []string) error {
 			OutputFile: outputPath,
 			Cached:     false,
 		})
-	} else {
+	} else if shouldOutput() {
 		fmt.Printf("Saved: %s\n", outputPath)
 	}
 	return nil
@@ -441,7 +448,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 							OutputFile: outputPath,
 							Cached:     true,
 						})
-					} else {
+					} else if shouldOutput() {
 						fmt.Printf("Cached: %s\n", p.Prompt)
 					}
 				}
@@ -471,7 +478,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 		if flagJSON {
 			outputJSON(result)
-		} else {
+		} else if shouldOutput() {
 			fmt.Printf("Dry run summary:\n")
 			fmt.Printf("  To generate: %d\n", result.ToGenerate)
 			fmt.Printf("  Cached:      %d\n", result.Cached)
@@ -490,7 +497,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(toGenerate) == 0 {
-		if !flagJSON {
+		if shouldOutput() {
 			fmt.Println("All images already cached.")
 		}
 		return nil
@@ -502,7 +509,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if !flagJSON {
+	if shouldOutput() {
 		fmt.Printf("Generating %d images (concurrency: %d)...\n\n", len(toGenerate), flagConcurrency)
 	}
 
@@ -574,7 +581,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 					OutputFile: outputPath,
 					Cached:     false,
 				})
-			} else {
+			} else if shouldOutput() {
 				fmt.Printf("Generated: %s -> %s\n", prompt, filename)
 			}
 			mu.Unlock()
@@ -596,7 +603,7 @@ func runBatch(cmd *cobra.Command, args []string) error {
 		return &ExitError{Code: ExitPartialFail, Message: msg}
 	}
 
-	if !flagJSON {
+	if shouldOutput() {
 		fmt.Printf("\nDone. Generated %d images.\n", len(toGenerate))
 	}
 	return nil
@@ -701,33 +708,35 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	// Human-readable output
-	if result.Valid {
-		fmt.Println("✓ Valid")
-	} else {
-		fmt.Println("✗ Invalid")
-	}
-
-	fmt.Printf("\nSummary:\n")
-	fmt.Printf("  Total prompts:  %d\n", result.Summary.TotalPrompts)
-	fmt.Printf("  Unique prompts: %d\n", result.Summary.UniquePrompts)
-	if result.Summary.Duplicates > 0 {
-		fmt.Printf("  Duplicates:     %d\n", result.Summary.Duplicates)
-	}
-	if result.Summary.EmptyPrompts > 0 {
-		fmt.Printf("  Empty prompts:  %d\n", result.Summary.EmptyPrompts)
-	}
-
-	if len(errors) > 0 {
-		fmt.Printf("\nErrors:\n")
-		for _, e := range errors {
-			fmt.Printf("  • %s\n", e)
+	if shouldOutput() {
+		if result.Valid {
+			fmt.Println("✓ Valid")
+		} else {
+			fmt.Println("✗ Invalid")
 		}
-	}
 
-	if len(warnings) > 0 {
-		fmt.Printf("\nWarnings:\n")
-		for _, w := range warnings {
-			fmt.Printf("  • %s\n", w)
+		fmt.Printf("\nSummary:\n")
+		fmt.Printf("  Total prompts:  %d\n", result.Summary.TotalPrompts)
+		fmt.Printf("  Unique prompts: %d\n", result.Summary.UniquePrompts)
+		if result.Summary.Duplicates > 0 {
+			fmt.Printf("  Duplicates:     %d\n", result.Summary.Duplicates)
+		}
+		if result.Summary.EmptyPrompts > 0 {
+			fmt.Printf("  Empty prompts:  %d\n", result.Summary.EmptyPrompts)
+		}
+
+		if len(errors) > 0 {
+			fmt.Printf("\nErrors:\n")
+			for _, e := range errors {
+				fmt.Printf("  • %s\n", e)
+			}
+		}
+
+		if len(warnings) > 0 {
+			fmt.Printf("\nWarnings:\n")
+			for _, w := range warnings {
+				fmt.Printf("  • %s\n", w)
+			}
 		}
 	}
 
