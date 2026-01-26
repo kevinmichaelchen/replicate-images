@@ -11,6 +11,7 @@ lint:
 
 fmt:
 	goimports -w .
+	bunx prettier --write --prose-wrap always **/*.md
 
 vuln:
 	govulncheck ./...
