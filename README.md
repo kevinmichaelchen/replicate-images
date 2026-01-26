@@ -15,41 +15,10 @@ A CLI that generates images from text prompts using [Replicate].
 
 ## Installation
 
-### Homebrew (macOS/Linux)
-
-```bash
-brew install kevinmichaelchen/tap/replicate-images
-```
-
-### Go
-
 Requires Go 1.21+:
 
 ```bash
 go install github.com/kevinmichaelchen/replicate-images/cmd/replicate-images@latest
-```
-
-### Download Binary
-
-Download pre-built binaries from the
-[GitHub Releases](https://github.com/kevinmichaelchen/replicate-images/releases)
-page.
-
-```bash
-# macOS (Apple Silicon)
-curl -Lo replicate-images https://github.com/kevinmichaelchen/replicate-images/releases/latest/download/replicate-images_darwin_arm64
-chmod +x replicate-images
-sudo mv replicate-images /usr/local/bin/
-
-# macOS (Intel)
-curl -Lo replicate-images https://github.com/kevinmichaelchen/replicate-images/releases/latest/download/replicate-images_darwin_amd64
-chmod +x replicate-images
-sudo mv replicate-images /usr/local/bin/
-
-# Linux (amd64)
-curl -Lo replicate-images https://github.com/kevinmichaelchen/replicate-images/releases/latest/download/replicate-images_linux_amd64
-chmod +x replicate-images
-sudo mv replicate-images /usr/local/bin/
 ```
 
 ## Usage
@@ -182,28 +151,6 @@ make lint
 # Format code
 make fmt
 ```
-
-### Releasing
-
-This project uses [GoReleaser](https://goreleaser.com/) for automated releases.
-
-1. Create and push a tag:
-
-   ```bash
-   git tag -a v1.0.0 -m "Release v1.0.0"
-   git push origin v1.0.0
-   ```
-
-2. GitHub Actions will automatically build and publish:
-   - Binaries for macOS (arm64, amd64), Linux (amd64, arm64), and Windows
-   - Homebrew formula to `kevinmichaelchen/homebrew-tap`
-
-### Homebrew Tap Setup
-
-To enable Homebrew installation, create a tap repository:
-
-1. Create a new repo: `kevinmichaelchen/homebrew-tap`
-2. GoReleaser will automatically push formula updates on each release
 
 [Replicate]: https://replicate.com
 [nativewebp]: https://github.com/HugoSmits86/nativewebp
