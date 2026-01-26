@@ -1,0 +1,12 @@
+# Output directory
+generated-images/
+
+# Binary
+/replicate-images
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
