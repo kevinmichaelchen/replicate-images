@@ -124,6 +124,20 @@ Existing cached images are skipped unless --no-cache is set.`,
 	RunE: runBatch,
 }
 
+var validateCmd = &cobra.Command{
+	Use:   "validate <prompts.yaml>",
+	Short: "Validate a prompts YAML file without generating",
+	Long: `Check a prompts YAML file for syntax errors and structural issues.
+
+Validates:
+  - YAML syntax
+  - Required fields (prompt)
+  - Empty prompts
+  - Duplicate prompt/model combinations`,
+	Args: cobra.ExactArgs(1),
+	RunE: runValidate,
+}
+
 func init() {
 	rootCmd.PersistentFlags().StringVarP(&flagOutput, "output", "o", "./generated-images", "Output directory")
 	rootCmd.PersistentFlags().BoolVar(&flagNoCache, "no-cache", false, "Force regeneration, ignore cache")
@@ -134,8 +148,11 @@ func init() {
 	batchCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
 	batchCmd.Flags().IntVarP(&flagConcurrency, "concurrency", "c", 3, "Number of concurrent generations")
 
+	validateCmd.Flags().StringVarP(&flagModel, "model", "m", client.DefaultModel, "Default model for prompts without one")
+
 	rootCmd.AddCommand(modelsCmd)
 	rootCmd.AddCommand(batchCmd)
+	rootCmd.AddCommand(validateCmd)
 }
 
 func runGenerate(cmd *cobra.Command, args []string) error {
@@ -581,6 +598,141 @@ func runBatch(cmd *cobra.Command, args []string) error {
 
 	if !flagJSON {
 		fmt.Printf("\nDone. Generated %d images.\n", len(toGenerate))
+	}
+	return nil
+}
+
+// ValidationResult represents the JSON output for validation.
+type ValidationResult struct {
+	Valid    bool              `json:"valid"`
+	Errors   []string          `json:"errors,omitempty"`
+	Warnings []string          `json:"warnings,omitempty"`
+	Summary  ValidationSummary `json:"summary"`
+}
+
+// ValidationSummary provides counts for validation.
+type ValidationSummary struct {
+	TotalPrompts   int `json:"total_prompts"`
+	UniquePrompts  int `json:"unique_prompts"`
+	Duplicates     int `json:"duplicates"`
+	EmptyPrompts   int `json:"empty_prompts"`
+}
+
+func runValidate(cmd *cobra.Command, args []string) error {
+	// Read file
+	data, err := os.ReadFile(args[0])
+	if err != nil {
+		if flagJSON {
+			outputJSON(ValidationResult{
+				Valid:  false,
+				Errors: []string{fmt.Sprintf("failed to read file: %v", err)},
+			})
+			return nil
+		}
+		return &ExitError{Code: ExitInvalidInput, Message: fmt.Sprintf("failed to read file: %v", err)}
+	}
+
+	// Parse YAML
+	var pf PromptFile
+	if err := yaml.Unmarshal(data, &pf); err != nil {
+		if flagJSON {
+			outputJSON(ValidationResult{
+				Valid:  false,
+				Errors: []string{fmt.Sprintf("invalid YAML syntax: %v", err)},
+			})
+			return nil
+		}
+		return &ExitError{Code: ExitInvalidInput, Message: fmt.Sprintf("invalid YAML syntax: %v", err)}
+	}
+
+	var (
+		errors   []string
+		warnings []string
+		seen     = make(map[string]int)
+		empty    int
+	)
+
+	// Check for empty prompts array
+	if len(pf.Prompts) == 0 {
+		errors = append(errors, "no prompts found in file")
+	}
+
+	// Validate each prompt
+	for i, p := range pf.Prompts {
+		model := p.Model
+		if model == "" {
+			model = flagModel
+		}
+
+		// Check for empty prompt
+		if p.Prompt == "" {
+			errors = append(errors, fmt.Sprintf("prompt %d: empty prompt text", i+1))
+			empty++
+			continue
+		}
+
+		// Check for duplicates
+		key := p.Prompt + "|" + model
+		if prev, exists := seen[key]; exists {
+			warnings = append(warnings, fmt.Sprintf("prompt %d: duplicate of prompt %d (same prompt+model)", i+1, prev))
+		} else {
+			seen[key] = i + 1
+		}
+	}
+
+	result := ValidationResult{
+		Valid:    len(errors) == 0,
+		Errors:   errors,
+		Warnings: warnings,
+		Summary: ValidationSummary{
+			TotalPrompts:  len(pf.Prompts),
+			UniquePrompts: len(seen),
+			Duplicates:    len(pf.Prompts) - len(seen) - empty,
+			EmptyPrompts:  empty,
+		},
+	}
+
+	if flagJSON {
+		outputJSON(result)
+		if !result.Valid {
+			return &ExitError{Code: ExitInvalidInput}
+		}
+		return nil
+	}
+
+	// Human-readable output
+	if result.Valid {
+		fmt.Println("✓ Valid")
+	} else {
+		fmt.Println("✗ Invalid")
+	}
+
+	fmt.Printf("\nSummary:\n")
+	fmt.Printf("  Total prompts:  %d\n", result.Summary.TotalPrompts)
+	fmt.Printf("  Unique prompts: %d\n", result.Summary.UniquePrompts)
+	if result.Summary.Duplicates > 0 {
+		fmt.Printf("  Duplicates:     %d\n", result.Summary.Duplicates)
+	}
+	if result.Summary.EmptyPrompts > 0 {
+		fmt.Printf("  Empty prompts:  %d\n", result.Summary.EmptyPrompts)
+	}
+
+	if len(errors) > 0 {
+		fmt.Printf("\nErrors:\n")
+		for _, e := range errors {
+			fmt.Printf("  • %s\n", e)
+		}
+	}
+
+	if len(warnings) > 0 {
+		fmt.Printf("\nWarnings:\n")
+		for _, w := range warnings {
+			fmt.Printf("  • %s\n", w)
+		}
+	}
+
+	if !result.Valid {
+		return &ExitError{Code: ExitInvalidInput}
 	}
 	return nil
 }
