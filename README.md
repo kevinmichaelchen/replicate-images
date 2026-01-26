@@ -15,6 +15,14 @@ A CLI that generates images from text prompts using [Replicate].
 
 ## Installation
 
+### Script (macOS/Linux/FreeBSD)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kevinmichaelchen/replicate-images/main/scripts/install.sh | bash
+```
+
+### Go
+
 Requires Go 1.21+:
 
 ```bash
@@ -151,6 +159,18 @@ make lint
 # Format code
 make fmt
 ```
+
+### Releasing
+
+Create and push a tag to trigger a release:
+
+```bash
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+```
+
+GitHub Actions will build binaries for all platforms and create a GitHub
+Release.
 
 [Replicate]: https://replicate.com
 [nativewebp]: https://github.com/HugoSmits86/nativewebp
