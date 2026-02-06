@@ -58,6 +58,7 @@ type DryRunPrompt struct {
 	Prompt     string `json:"prompt"`
 	Model      string `json:"model"`
 	Hash       string `json:"hash"`
+	Name       string `json:"name,omitempty"`
 	Status     string `json:"status"`
 	OutputFile string `json:"output_file,omitempty"`
 }
@@ -122,6 +123,7 @@ Example prompts.yaml:
   prompts:
     - prompt: "a cat in space"
       model: black-forest-labs/flux-schnell
+      name: cat-space
     - prompt: "a dog on the moon"
     - prompt: "a bird underwater"
       model: stability-ai/sdxl
@@ -141,7 +143,8 @@ Validates:
   - YAML syntax
   - Required fields (prompt)
   - Empty prompts
-  - Duplicate prompt/model combinations`,
+  - Duplicate prompt/model combinations
+  - Duplicate names`,
 	Args: cobra.ExactArgs(1),
 	RunE: runValidate,
 }
@@ -418,6 +421,16 @@ type PromptFile struct {
 type PromptEntry struct {
 	Prompt string `yaml:"prompt"`
 	Model  string `yaml:"model,omitempty"`
+	Name   string `yaml:"name,omitempty"`
+}
+
+// filenameForEntry returns the output filename for a prompt entry.
+// If the entry has a custom name, it uses "{name}.webp"; otherwise "{hash}.webp".
+func filenameForEntry(p PromptEntry, hash string) string {
+	if p.Name != "" {
+		return p.Name + ".webp"
+	}
+	return hash + ".webp"
 }
 
 func runBatch(_ *cobra.Command, args []string) error {
@@ -495,6 +508,7 @@ func runBatch(_ *cobra.Command, args []string) error {
 							Prompt:     p.Prompt,
 							Model:      model,
 							Hash:       hash,
+							Name:       p.Name,
 							Status:     "cached",
 							OutputFile: outputPath,
 						})
@@ -515,12 +529,13 @@ func runBatch(_ *cobra.Command, args []string) error {
 		}
 
 		if !isCached {
-			toGenerate = append(toGenerate, PromptEntry{Prompt: p.Prompt, Model: model})
+			toGenerate = append(toGenerate, PromptEntry{Prompt: p.Prompt, Model: model, Name: p.Name})
 			if flagDryRun {
 				dryPrompts = append(dryPrompts, DryRunPrompt{
 					Prompt: p.Prompt,
 					Model:  model,
 					Hash:   hash,
+					Name:   p.Name,
 					Status: "pending",
 				})
 			}
@@ -547,6 +562,7 @@ func runBatch(_ *cobra.Command, args []string) error {
 				fmt.Printf("  [%s] %s\n", p.Status, p.Prompt)
 				fmt.Printf("         Model: %s\n", p.Model)
 				fmt.Printf("         Hash:  %s\n", p.Hash)
+				fmt.Printf("         Name:  %s\n", p.Name)
 				if p.OutputFile != "" {
 					fmt.Printf("         File:  %s\n", p.OutputFile)
 				}
@@ -584,27 +600,27 @@ func runBatch(_ *cobra.Command, args []string) error {
 		wg.Add(1)
 		sem <- struct{}{}
 
-		go func(prompt, model string) {
+		go func(entry PromptEntry) {
 			defer wg.Done()
 			defer func() { <-sem }()
 
-			hash := cache.Hash(prompt, model)
-			filename := hash + ".webp"
+			hash := cache.Hash(entry.Prompt, entry.Model)
+			filename := filenameForEntry(entry, hash)
 			outputPath := filepath.Join(flagOutput, filename)
 
-			data, _, err := rc.GenerateImage(ctx, model, prompt)
+			data, _, err := rc.GenerateImage(ctx, entry.Model, entry.Prompt)
 			if err != nil {
 				mu.Lock()
 				if flagJSON {
 					outputJSON(GenerateResult{
 						Status: "error",
-						Prompt: prompt,
-						Model:  model,
+						Prompt: entry.Prompt,
+						Model:  entry.Model,
 						Hash:   hash,
 						Error:  err.Error(),
 					})
 				} else {
-					fmt.Printf("Error [%s]: %v\n", prompt, err)
+					fmt.Printf("Error [%s]: %v\n", entry.Prompt, err)
 				}
 				errored++
 				mu.Unlock()
@@ -616,13 +632,13 @@ func runBatch(_ *cobra.Command, args []string) error {
 				if flagJSON {
 					outputJSON(GenerateResult{
 						Status: "error",
-						Prompt: prompt,
-						Model:  model,
+						Prompt: entry.Prompt,
+						Model:  entry.Model,
 						Hash:   hash,
 						Error:  err.Error(),
 					})
 				} else {
-					fmt.Printf("Error saving [%s]: %v\n", prompt, err)
+					fmt.Printf("Error saving [%s]: %v\n", entry.Prompt, err)
 				}
 				errored++
 				mu.Unlock()
@@ -630,21 +646,21 @@ func runBatch(_ *cobra.Command, args []string) error {
 			}
 
 			mu.Lock()
-			c.Upsert(prompt, model, filename)
+			c.Upsert(entry.Prompt, entry.Model, filename)
 			if flagJSON {
 				outputJSON(GenerateResult{
 					Status:     "generated",
-					Prompt:     prompt,
-					Model:      model,
+					Prompt:     entry.Prompt,
+					Model:      entry.Model,
 					Hash:       hash,
 					OutputFile: outputPath,
 					Cached:     false,
 				})
 			} else if shouldOutput() {
-				fmt.Printf("Generated: %s -> %s\n", prompt, filename)
+				fmt.Printf("Generated: %s -> %s\n", entry.Prompt, filename)
 			}
 			mu.Unlock()
-		}(p.Prompt, p.Model)
+		}(p)
 	}
 
 	wg.Wait()
@@ -715,6 +731,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		errors   []string
 		warnings []string
 		seen     = make(map[string]int)
+		names    = make(map[string]int)
 		empty    int
 	)
 
@@ -743,6 +760,15 @@ func runValidate(cmd *cobra.Command, args []string) error {
 			warnings = append(warnings, fmt.Sprintf("prompt %d: duplicate of prompt %d (same prompt+model)", i+1, prev))
 		} else {
 			seen[key] = i + 1
+		}
+
+		// Check for duplicate output names (would overwrite files)
+		if p.Name != "" {
+			if prev, exists := names[p.Name]; exists {
+				errors = append(errors, fmt.Sprintf("prompt %d: duplicate name %q (also used by prompt %d)", i+1, p.Name, prev))
+			} else {
+				names[p.Name] = i + 1
+			}
 		}
 	}
 
